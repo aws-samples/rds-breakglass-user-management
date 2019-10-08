@@ -1,0 +1,281 @@
+{
+	"AWSTemplateFormatVersion": "2010-09-09",
+	"Description": "AWS CloudFormation template to create bastion host",
+	"Parameters": {
+		"VpcId": {
+			"Type": "AWS::EC2::VPC::Id",
+			"Description": "Specify the VPC for bastion and management lambdas",
+			"ConstraintDescription": "VPC Id must begin with 'vpc-' or leave blank to have a new VPC created"
+		},
+		"PublicSubnetId": {
+			"Type": "AWS::EC2::Subnet::Id",
+			"Description": "Subnet in the VPC for bastion"
+		},
+		"PrivateSubnetId1": {
+			"Type": "AWS::EC2::Subnet::Id",
+			"Description": "Subnet in the VPC for management lambdas. Should be the same as RDS"
+		},
+		"PrivateSubnetId2": {
+			"Type": "AWS::EC2::Subnet::Id",
+			"Description": "Subnet in the VPC for management lambdas. Should be the same as RDS"
+		},
+		"PublicSecurityGroupId": {
+			"Type": "AWS::EC2::SecurityGroup::Id",
+			"Description": "Provide SecurityGroupId for bastion"
+		},
+		"PrivateSecurityGroupId": {
+			"Type": "AWS::EC2::SecurityGroup::Id",
+			"Description": "Provide SecurityGroupId for management lambdas"
+		},
+		"KeyName": {
+			"Description": "Name of an existing EC2 KeyPair to enable SSH access to the instance",
+			"Type": "AWS::EC2::KeyPair::KeyName",
+			"ConstraintDescription": "must be the name of an existing EC2 KeyPair."
+		}
+	},
+	"Mappings": {
+		"AWSInstanceType2Arch": {
+			"t3.medium": {
+				"Arch": "HVM64"
+			}
+		}
+	},
+	"Resources": {
+		"EC2Instance1": {
+			"Type": "AWS::EC2::Instance",
+			"Properties": {
+				"InstanceType": "t3.medium",
+				"KeyName": {
+					"Ref": "KeyName"
+				},
+				"ImageId": "ami-0bb735524c904dc9c",
+				"IamInstanceProfile": "Ec2-admin",
+				"NetworkInterfaces": [
+					{
+						"AssociatePublicIpAddress": true,
+						"DeviceIndex": 0,
+						"SubnetId": {
+							"Ref": "PublicSubnetId"
+						},
+						"GroupSet": [
+							{
+								"Ref": "PublicSecurityGroupId"
+							}
+						]
+					}
+				]
+			}
+		},
+		"EC2Instance2": {
+			"Type": "AWS::EC2::Instance",
+			"Properties": {
+				"InstanceType": "t3.medium",
+				"KeyName": {
+					"Ref": "KeyName"
+				},
+				"ImageId": "ami-0bb735524c904dc9c",
+				"IamInstanceProfile": "Ec2-admin",
+				"NetworkInterfaces": [
+					{
+						"AssociatePublicIpAddress": true,
+						"DeviceIndex": 0,
+						"SubnetId": {
+							"Ref": "PublicSubnetId"
+						},
+						"GroupSet": [
+							{
+								"Ref": "PublicSecurityGroupId"
+							}
+						]
+					}
+				]
+			}
+		},
+		"CreationLambda": {
+			"Type": "AWS::Lambda::Function",
+			"Properties": {
+				"Code": {
+					"S3Bucket": "logicalaccessmanagement",
+					"S3Key": "CreateBreakglassUserFunction.zip"
+				},
+				"Description": "Lambda to CreateBreakglassUserFunction",
+				"Handler": "com.amazonaws.breakglass.rds.demo.CreateBreakglassUser",
+				"MemorySize": 512,
+				"Role": "arn:aws:iam::234316018121:role/lambda_admin",
+				"Runtime": "java8",
+				"Timeout": 300,
+				"VpcConfig": {
+					"SecurityGroupIds": [
+						{
+							"Ref": "PrivateSecurityGroupId"
+						}
+					],
+					"SubnetIds": [
+						{
+							"Ref": "PrivateSubnetId1"
+						},
+						{
+							"Ref": "PrivateSubnetId2"
+						}
+					]
+				}
+			}
+		},
+		"DeletionLambda": {
+			"Type": "AWS::Lambda::Function",
+			"Properties": {
+				"Code": {
+					"S3Bucket": "logicalaccessmanagement",
+					"S3Key": "CleanUpBreakglass.zip"
+				},
+				"Description": "Lambda to CleanUpBreakglassFunction",
+				"Handler": "com.amazonaws.breakglass.rds.demo.CleanUpBreakglass",
+				"MemorySize": 512,
+				"Role": "arn:aws:iam::234316018121:role/lambda_admin",
+				"Runtime": "java8",
+				"Timeout": 300,
+				"VpcConfig": {
+					"SecurityGroupIds": [
+						{
+							"Ref": "PrivateSecurityGroupId"
+						}
+					],
+					"SubnetIds": [
+						{
+							"Ref": "PrivateSubnetId1"
+						},
+						{
+							"Ref": "PrivateSubnetId2"
+						}
+					]
+				}
+			}
+		},
+		"SystemManagerDocumentForCreation": {
+			"DependsOn": "CreationLambda",
+			"Type": "AWS::SSM::Document",
+			"Properties": {
+				"Content": {
+					"description": "Automation Document To Call AWS Lambda",
+					"schemaVersion": "0.3",
+					"assumeRole": "{{ AutomationAssumeRole }}",
+					"parameters": {
+						"DBName": {
+							"type": "String",
+							"description": "Database for which breakglass user is required",
+							"default": "LAM_Database"
+						},
+						"AutomationAssumeRole": {
+							"type": "String",
+							"description": "(Optional) The ARN of the role that allows Automation to perform the actions on your behalf.",
+							"default": "arn:aws:iam::234316018121:role/lambda_admin"
+						}
+					},
+					"mainSteps": [
+						{
+							"name": "CreateBreakglassUser",
+							"action": "aws:invokeLambdaFunction",
+							"maxAttempts": 1,
+							"timeoutSeconds": 300,
+							"onFailure": "Abort",
+							"inputs": {
+								"FunctionName": {
+									"Ref": "CreationLambda"
+								},
+								"Payload": "{\"dataBaseName\": \"{{DBName}}\"}"
+							}
+						}
+					],
+					"outputs": [
+						"CreateBreakglassUser.Payload"
+					]
+				},
+				"DocumentType": "Automation",
+				"Tags": [
+					{
+						"Key": "Name",
+						"Value": "LAM-CFN-CreateBreakGlassUser"
+					}
+				]
+			}
+		},
+		"SystemManagerDocumentForDeletion": {
+			"Type": "AWS::SSM::Document",
+			"DependsOn": "DeletionLambda",
+			"Properties": {
+				"Content": {
+					"description": "Automation Document To Call AWS Lambda for Cleaning BreakglassUsers",
+					"schemaVersion": "0.3",
+					"assumeRole": "{{ AutomationAssumeRole }}",
+					"parameters": {
+						"DBName": {
+							"type": "String",
+							"description": "Database for which breakglass users need to be removed",
+							"default": "LAM_Database"
+						},
+						"AutomationAssumeRole": {
+							"type": "String",
+							"description": "(Optional) The ARN of the role that allows Automation to perform the actions on your behalf.",
+							"default": "arn:aws:iam::234316018121:role/lambda_admin"
+						}
+					},
+					"mainSteps": [
+						{
+							"name": "RemoveBreakglassUsers",
+							"action": "aws:invokeLambdaFunction",
+							"maxAttempts": 1,
+							"timeoutSeconds": 300,
+							"onFailure": "Abort",
+							"inputs": {
+								"FunctionName": {
+									"Ref": "DeletionLambda"
+								},
+								"Payload": "{\"dataBaseName\": \"{{DBName}}\"}"
+							}
+						}
+					],
+					"outputs": [
+						"RemoveBreakglassUsers.Payload"
+					]
+				},
+				"DocumentType": "Automation",
+				"Tags": [
+					{
+						"Key": "Name",
+						"Value": "LAM-CFN-DeleteBreakGlassUser"
+					}
+				]
+			}
+		},
+		"CleanUpSchedule": {
+			"Type": "AWS::Events::Rule",
+			"DependsOn": "DeletionLambda",
+			"Properties": {
+				"Description": "Schedule to clean up breakglass users",
+				"ScheduleExpression": "cron(59 23 * * ? *)",
+				"State": "ENABLED",
+				"Targets": [
+					{
+						"Arn": {
+							"Fn::GetAtt": [
+								"DeletionLambda",
+								"Arn"
+							]
+						},
+						"Id": "CleanUpBreakglassFunction",
+						"Input": {
+							"Fn::Join": [
+								"",
+								[
+									"{\"dataBaseName\": \"",
+									"LAM_Database",
+									"\"}"
+								]
+							]
+						}
+					}
+				]
+			}
+		}
+	}
+}

@@ -1,11 +1,7 @@
-## My Project
+## RDS MySQL Breakglass User
 
-TODO: Fill this README out!
+This solution provides a mechanism to create and destroy short lived credentials to RDS for break glass scenarios. The sample code is for MySQL RDS but can be used as reference to do the same for other supported engine types.
 
-Be sure to:
-
-* Change the title in this README
-* Edit your repository description on GitHub
 
 ## License
 
